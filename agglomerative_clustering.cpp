@@ -19,7 +19,7 @@ else
 HierarchicalClustering::HierarchicalClustering(vector<Region> &_regions): regions(_regions)
 {
 #ifndef _TRAIN_
-    boost = StatModel::load<Boost>( "./trained_boost_groups.xml" );
+    boost = StatModel::load<Boost>( "../trained_boost_groups.xml" );
     if( boost.empty() )
     {
         cout << "Could not read the classifier ./trained_boost_groups.xml" << endl;

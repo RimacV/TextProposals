@@ -9,6 +9,8 @@
 #include  "opencv2/highgui.hpp"
 #include  "opencv2/imgproc.hpp"
 #include  "opencv2/features2d.hpp"
+#include  "opencv2/text.hpp"
+#include  "opencv2/photo.hpp"
 
 #include "region.h"
 #include "agglomerative_clustering.h"
@@ -31,6 +33,27 @@ using namespace cv;
 #define CHANNEL_R    1 // Use Red color channel
 #define CHANNEL_G    1 // Use Green color channel
 #define CHANNEL_B    1 // Use Blue color channel
+
+
+void mergeOverlappingBoxes(std::vector<cv::Rect> &inputBoxes, cv::Mat &image, std::vector<cv::Rect> &outputBoxes)
+{
+    cv::Mat mask = cv::Mat::zeros(image.size(), CV_8UC1); // Mask of original image
+    cv::Size scaleFactor(10,10); // To expand rectangles, i.e. increase sensitivity to nearby rectangles. Doesn't have to be (10,10)--can be anything
+    for (int i = 0; i < inputBoxes.size(); i++)
+    {
+        cv::Rect box = inputBoxes.at(i) + scaleFactor;
+        cv::rectangle(mask, box, cv::Scalar(255), CV_FILLED); // Draw filled bounding boxes on mask
+    }
+
+    std::vector< std::vector <cv::Point> > contours;
+    // Find contours in mask
+    // If bounding boxes overlap, they will be joined by this function call
+    cv::findContours(mask, contours, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE);
+    for (int j = 0; j < contours.size(); j++)
+    {
+        outputBoxes.push_back(cv::boundingRect(contours.at(j)));
+    }
+}
 
 
 int main( int argc, char** argv )
@@ -81,7 +104,8 @@ int main( int argc, char** argv )
         channels.push_back(pyr);
       }*/
     }
-
+    std::vector<Rect> mergedProposalsChannel;
+    std::vector<Rect> proposalsChannel;
     for (int c=0; c<channels.size(); c++)
     {
 
@@ -161,27 +185,87 @@ int main( int argc, char** argv )
           HierarchicalClustering h_clustering(regions);
           vector<HCluster> dendrogram;
           h_clustering(data, N, dim, (unsigned char)0, (unsigned char)3, dendrogram, x_coord_mult, channels[c].size());
-      
+          std::vector<Rect> proposals;
+          std::vector<Rect> mergedProposals;
           for (int k=0; k<dendrogram.size(); k++)
           {
              int ml = 1;
              if (c>=num_channels) ml=2;// update sizes for smaller pyramid lvls
              if (c>=2*num_channels) ml=4;// update sizes for smaller pyramid lvls
 
-             cout << dendrogram[k].rect.x*ml << " " << dendrogram[k].rect.y*ml << " "
+            /* cout << dendrogram[k].rect.x*ml << " " << dendrogram[k].rect.y*ml << " "
                   << dendrogram[k].rect.width*ml << " " << dendrogram[k].rect.height*ml << " "
-                  << (float)dendrogram[k].probability*-1 << endl;
+                  << (float)dendrogram[k].probability*-1 << endl;*/
              //     << (float)dendrogram[k].nfa << endl;
              //     << (float)(k) * ((float)rand()/RAND_MAX) << endl;
              //     << (float)dendrogram[k].nfa * ((float)rand()/RAND_MAX) << endl;
-             rectangle(src,Point(dendrogram[k].rect.x*ml,dendrogram[k].rect.y*ml), Point(dendrogram[k].rect.x*ml+dendrogram[k].rect.width*ml, dendrogram[k].rect.y*ml+dendrogram[k].rect.height*ml), Scalar(0,0,255));
+             if ((float)dendrogram[k].probability*-1 < -0.98){
+               proposals.push_back(Rect(Point(dendrogram[k].rect.x*ml,dendrogram[k].rect.y*ml), Point(dendrogram[k].rect.x*ml+dendrogram[k].rect.width*ml, dendrogram[k].rect.y*ml+dendrogram[k].rect.height*ml)));
+             }
+             
           }
-  
+          mergeOverlappingBoxes(proposals,src,mergedProposals);
+          for( int b = 0; b < mergedProposals.size();b++){
+
+            proposalsChannel.push_back(mergedProposals.at(b));
+           
+          }
         }
         free(data);
 
     }
+    mergeOverlappingBoxes(proposalsChannel,src,mergedProposalsChannel);
+    for( int b = 0; b < mergedProposalsChannel.size();b++){
+      rectangle(src,mergedProposalsChannel.at(b), Scalar(0,0,255));
+    }
 
+    Ptr<cv::text::OCRTesseract> tess = cv::text::OCRTesseract::create(NULL,NULL,NULL,0,11);
+    
+    std::string output_string;
+    for( int b = 0; b < mergedProposalsChannel.size();b++){
+      tess->setWhiteList("0123456789");
+      Mat miniMat = src(mergedProposalsChannel.at(b)).clone();
+      int coef = 200;
+      miniMat = miniMat/coef;
+      Mat miniMatLab;
+      cv::cvtColor(miniMat, miniMatLab, CV_BGR2Lab);
+
+        // Extract the L channel
+      std::vector<cv::Mat> lab_planes(3);
+      cv::split(miniMatLab, lab_planes);  // now we have the L image in lab_planes[0]
+
+      // apply the CLAHE algorithm to the L channel
+      cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE();
+      clahe->setClipLimit(4);
+      cv::Mat dst;
+      clahe->apply(lab_planes[0], dst);
+
+      // Merge the the color planes back into an Lab image
+      dst.copyTo(lab_planes[0]);
+      cv::merge(lab_planes, miniMatLab);
+
+     // convert back to RGB
+      cv::Mat image_clahe;
+      cv::cvtColor(miniMatLab, image_clahe, CV_Lab2BGR);
+
+      // display the results  (you might also want to see lab_planes[0] before and after).
+      cv::imshow("image original", miniMat);
+      cv::imshow("image CLAHE", image_clahe);
+      cv::waitKey();
+      Mat gray;
+      cvtColor( miniMat, gray, CV_BGR2GRAY );
+      Mat binary;
+      //adaptiveThreshold( gray, binary,255,CV_ADAPTIVE_THRESH_MEAN_C,CV_THRESH_BINARY_INV,13, 1);
+      threshold( gray, binary,160,255,CV_THRESH_BINARY_INV);
+      cv::imshow("binary", binary);
+      imwrite("./binary.png",binary);
+      waitKey(-1);
+      tess->run(binary, output_string);
+      cout << output_string <<endl;
+    }
+
+    
+    
     imshow("",src);
     waitKey(-1);
 }

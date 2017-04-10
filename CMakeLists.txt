@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 2.8)
 project(TextProposals)
 
+
 # Select a default build configuration if none was chosen
 IF(NOT CMAKE_BUILD_TYPE)
   SET(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build, options are: None (CMAKE_CXX_FLAGS or CMAKE_C_FLAGS used) Debug Release RelWithDebInfo MinSizeRel." FORCE)
@@ -8,12 +9,12 @@ ENDIF()
 
 find_package(OpenCV REQUIRED)
 
-include_directories ("/usr/src/caffe/include/")
-include_directories ("/usr/src/caffe/.build_release/src/")
-include_directories ("/usr/local/cuda-7.5/include/")
+include_directories ("/home/rvq/github/caffe/build/install/include/")
+include_directories ("/home/rvq/github/caffe/src/")
+include_directories ("/usr/local/cuda-8.0/include/")
 
-link_directories ("/usr/src/caffe/build/lib/")
-link_directories ("/usr/local/cuda-7.5/lib/")
+link_directories ("/home/rvq/github/caffe/build/install/lib/")
+link_directories ("/usr/local/cuda-8.0/lib/")
 
 set (EXTRA_LIBS ${EXTRA_LIBS} libcaffe.so -lprotobuf -lglog -lboost_system)
 
