@@ -61,6 +61,10 @@
 #endif
 
 #include <cmath>
+#define MAC_OS
+#ifdef MAC_OS
+#include <cstdlib>
+#endif
 
 typedef int_fast32_t t_index;
 #ifndef INT32_MAX
