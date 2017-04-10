@@ -1,10 +1,14 @@
 #define _MAIN
-
+#define MAC_OS
 #include <iostream>
 #include <fstream>
 #include <stdio.h>
 #include <stdlib.h>     /* srand, rand */
 #include <time.h>       /* time */
+
+#ifdef MAC_OS
+#include <cstdlib>
+#endif
 
 #include  "opencv2/highgui.hpp"
 #include  "opencv2/imgproc.hpp"
@@ -38,7 +42,7 @@ using namespace cv;
 void mergeOverlappingBoxes(std::vector<cv::Rect> &inputBoxes, cv::Mat &image, std::vector<cv::Rect> &outputBoxes)
 {
     cv::Mat mask = cv::Mat::zeros(image.size(), CV_8UC1); // Mask of original image
-    cv::Size scaleFactor(10,10); // To expand rectangles, i.e. increase sensitivity to nearby rectangles. Doesn't have to be (10,10)--can be anything
+    cv::Size scaleFactor(0,0); // To expand rectangles, i.e. increase sensitivity to nearby rectangles. Doesn't have to be (10,10)--can be anything
     for (int i = 0; i < inputBoxes.size(); i++)
     {
         cv::Rect box = inputBoxes.at(i) + scaleFactor;
@@ -53,6 +57,47 @@ void mergeOverlappingBoxes(std::vector<cv::Rect> &inputBoxes, cv::Mat &image, st
     {
         outputBoxes.push_back(cv::boundingRect(contours.at(j)));
     }
+}
+
+void colorReduce(cv::Mat& image, int div=64)
+{    
+    int nl = image.rows;                    // number of lines
+    int nc = image.cols * image.channels(); // number of elements per line
+
+    for (int j = 0; j < nl; j++)
+    {
+        // get the address of row j
+        uchar* data = image.ptr<uchar>(j);
+
+        for (int i = 0; i < nc; i++)
+        {
+            // process each pixel
+            data[i] = data[i] / div * div + div / 2;
+        }
+    }
+}
+
+void convertToLab(cv::Mat& miniMat, cv::Mat& image_clahe)
+{
+      cv::Mat miniMatLab;
+      cv::cvtColor(miniMat, miniMatLab, CV_BGR2Lab);
+
+        // Extract the L channel
+      std::vector<cv::Mat> lab_planes(3);
+      cv::split(miniMatLab, lab_planes);  // now we have the L image in lab_planes[0]
+
+      // apply the CLAHE algorithm to the L channel
+      cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE();
+      clahe->setClipLimit(4);
+      cv::Mat dst;
+      clahe->apply(lab_planes[0], dst);
+
+      // Merge the the color planes back into an Lab image
+      dst.copyTo(lab_planes[0]);
+      cv::merge(lab_planes, miniMatLab);
+
+     // convert back to RGB
+      cv::cvtColor(miniMatLab, image_clahe, CV_Lab2BGR);
 }
 
 
@@ -199,7 +244,7 @@ int main( int argc, char** argv )
              //     << (float)dendrogram[k].nfa << endl;
              //     << (float)(k) * ((float)rand()/RAND_MAX) << endl;
              //     << (float)dendrogram[k].nfa * ((float)rand()/RAND_MAX) << endl;
-             if ((float)dendrogram[k].probability*-1 < -0.98){
+             if ((float)dendrogram[k].probability*-1 < -0.99){
                proposals.push_back(Rect(Point(dendrogram[k].rect.x*ml,dendrogram[k].rect.y*ml), Point(dendrogram[k].rect.x*ml+dendrogram[k].rect.width*ml, dendrogram[k].rect.y*ml+dendrogram[k].rect.height*ml)));
              }
              
@@ -219,48 +264,48 @@ int main( int argc, char** argv )
       rectangle(src,mergedProposalsChannel.at(b), Scalar(0,0,255));
     }
 
-    Ptr<cv::text::OCRTesseract> tess = cv::text::OCRTesseract::create(NULL,NULL,NULL,0,11);
+    Ptr<cv::text::OCRTesseract> tess = cv::text::OCRTesseract::create(NULL,NULL,NULL,0,7);
     
     std::string output_string;
     for( int b = 0; b < mergedProposalsChannel.size();b++){
       tess->setWhiteList("0123456789");
       Mat miniMat = src(mergedProposalsChannel.at(b)).clone();
-      int coef = 200;
-      miniMat = miniMat/coef;
       Mat miniMatLab;
-      cv::cvtColor(miniMat, miniMatLab, CV_BGR2Lab);
-
-        // Extract the L channel
-      std::vector<cv::Mat> lab_planes(3);
-      cv::split(miniMatLab, lab_planes);  // now we have the L image in lab_planes[0]
-
-      // apply the CLAHE algorithm to the L channel
-      cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE();
-      clahe->setClipLimit(4);
-      cv::Mat dst;
-      clahe->apply(lab_planes[0], dst);
-
-      // Merge the the color planes back into an Lab image
-      dst.copyTo(lab_planes[0]);
-      cv::merge(lab_planes, miniMatLab);
-
-     // convert back to RGB
-      cv::Mat image_clahe;
-      cv::cvtColor(miniMatLab, image_clahe, CV_Lab2BGR);
-
+      //colorReduce(miniMat,100);
+      //Mat image_clahe;
+      //convertToLab(miniMat,image_clahe);
       // display the results  (you might also want to see lab_planes[0] before and after).
       cv::imshow("image original", miniMat);
-      cv::imshow("image CLAHE", image_clahe);
       cv::waitKey();
       Mat gray;
       cvtColor( miniMat, gray, CV_BGR2GRAY );
       Mat binary;
-      //adaptiveThreshold( gray, binary,255,CV_ADAPTIVE_THRESH_MEAN_C,CV_THRESH_BINARY_INV,13, 1);
-      threshold( gray, binary,160,255,CV_THRESH_BINARY_INV);
+      //adaptiveThreshold( gray, binary,255,CV_ADAPTIVE_THRESH_GAUSSIAN_C,CV_THRESH_BINARY_INV,9, 1);
+      //threshold( gray, binary,160,255,CV_THRESH_BINARY_INV);
+      blur( gray, binary, Size(3,3) );
+      /// Canny detector
+      Canny( binary, binary, 50, 150, 3 );
+  
+        /// Find contours   
+      vector<vector<Point> > contours;
+      vector<Vec4i> hierarchy;
+      RNG rng(12345);
+      findContours( binary, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE, Point(0, 0) );
+      /// Draw contours
+      Mat drawing = Mat::zeros( gray.size(), CV_8UC3 );
+      for( int i = 0; i< contours.size(); i++ )
+      {
+          Scalar color = Scalar( rng.uniform(0, 255), rng.uniform(0,255), rng.uniform(0,255) );
+          drawContours( drawing, contours, i, color, 2, 8, hierarchy, 0, Point() );
+      }
+      imshow( "Result window", drawing );
+      waitKey(0);      
+
+
       cv::imshow("binary", binary);
       imwrite("./binary.png",binary);
       waitKey(-1);
-      tess->run(binary, output_string);
+      tess->run(drawing, output_string);
       cout << output_string <<endl;
     }
 
